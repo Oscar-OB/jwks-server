@@ -1,32 +1,35 @@
 import base64
-import time
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-keys = []
+private_key = rsa.generate_private_key(
+    public_exponent=65537, key_size=2048
+)
 
-def generate_rsa_keypair():
-    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    public_key = private_key.public_key()
+expired_key = rsa.generate_private_key(
+    public_exponent=65537, key_size=2048
+)
 
-    kid = f"key-{int(time.time())}"
-    expiry = time.time() + 3600 # 1 hour expiry
-    return {
-        "kid": kid,
-        "private_key": private_key,
-        "public_key": public_key,
-        "expiry": expiry
-    }
 
-def to_base64_url(value):
-    return base64.urlsafe_b64encode(value).decode('utf-8').rstrip("=")
+pem = private_key.private_bytes(
+    encoding=serialization.Encoding.PEM,
+    format=serialization.PrivateFormat.TraditionalOpenSSL,
+    encryption_algorithm=serialization.NoEncryption()
+)
 
-def get_public_keys():
-    valid_keys = [
-        {
-            "kid": key['kid'],
-            "kty": "RSA",
-            "n": to_base64_url(key['public_key'].public_numbers().n.to_bytes(256, 'big')),
-            "e": to_base64_url(key['public_key'].public_numbers().e.to_bytes(3, 'big'))
-        } for key in keys if key['expiry'] > time.time()
-    ]
-    return {"keys": valid_keys}
+expired_pem = expired_key.private_bytes(
+    encoding=serialization.Encoding.PEM,
+    format=serialization.PrivateFormat.TraditionalOpenSSL,
+    encryption_algorithm=serialization.NoEncryption()
+)
+
+numbers = private_key.private_numbers()
+
+def to_base_64(value):
+    value_hex = format(value, 'x')
+    # Ensure even length
+    if len(value_hex) % 2 == 1:
+        value_hex = '0' + value_hex
+    value_bytes = bytes.fromhex(value_hex)
+    encoded = base64.urlsafe_b64encode(value_bytes).rstrip(b'=')
+    return encoded.decode('utf-8')

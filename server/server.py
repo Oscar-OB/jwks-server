@@ -1,42 +1,85 @@
-from flask import Flask, jsonify, request
-import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import urlparse, parse_qs
+import datetime
+import json
 import jwt
-from keys.key_manager import generate_rsa_keypair, get_public_keys, keys
-
-app = Flask(__name__)
+from keys import key_manager
 
 
-@app.route('/jwks', methods=['GET'])
-def jwks():
+hostname = "localhost"
+serverPort = 8080
 
-    public_keys = get_public_keys()
-    return jsonify(public_keys)
+class MyServer(BaseHTTPRequestHandler):
+    def do_PUT(self):
+        self.send_response(405)
+        self.end_headers()
+        return
 
+    def do_DELETE(self):
+        self.send_response(405)
+        self.end_headers()
+        return
 
-@app.route('/auth', methods=['POST'])
-def auth():
-    expired = request.args.get('expired')
-    current_time = time.time()
+    def do_PATCH(self):
+        self.send_response(405)
+        self.end_headers()
+        return
 
-    # Use an expired key if requested
-    key_pair = next((k for k in keys if expired and k['expiry'] < current_time), None)
-    if not key_pair:
-        key_pair = next((k for k in keys if k['expiry'] > current_time), None)
+    def do_HEAD(self):
+        self.send_response(405)
+        self.end_headers()
+        return
 
-    if not key_pair:
-        return jsonify({"error": "No valid key pair available"}), 400
+    def do_POST(self):
+        parsed_path = urlparse(self.path)
+        params = parse_qs(parsed_path.query)
+        if parsed_path.path == "/auth":
+            headers = {
+                "kid": "goodKID"
+            }
+            token_payload = {
+                "user": "username",
+                "exp": datetime.datetime.utcnow() + datetime.timedelta(minutes=60),
+            }
+            if 'expired' in params:
+                headers["kid"] = "expiredKID"
+                token_payload["exp"] = datetime.datetime.utcnow() - datetime.timedelta(minutes=1)
+            encoded_jwt = jwt.encode(token_payload, key_manager.pem, algorithm='RS256', headers=headers)
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(bytes(encoded_jwt, 'utf-8'))
+            return
 
-    # Create a JWT
-    payload = {"sub": "user", "iat": current_time}
-    token = jwt.encode(payload, key_pair['private_key'], algorithm='RS256')
+        self.send_response(405)
+        self.end_headers()
+        return
 
-    return jsonify({"token": token})
+    def do_GET(self):
+        if self.path == "/.well-known/jwks.json":
+            self.send_response(200)
+            self.send_header("Content-type", "application/json")
+            self.end_headers()
+            keys = {
+                "keys": [
+                    {
+                        "alg": "RS256",
+                        "kty": "RSA",
+                        "use": "sig",
+                        "kid": "goodKID",
+                        "n": key_manager.to_base_64(key_manager.numbers.public_numbers.n),
+                        "e": key_manager.to_base_64(key_manager.numbers.public_numbers.e),
+                    }
+                ]
+            }
+            self.wfile.write(bytes(json.dumps(keys), "utf-8"))
+            return
 
+        self.send_response(405)
+        self.end_headers()
+        return
 
 if __name__ == '__main__':
-    # Generate keys at startup
-    key_pair = generate_rsa_keypair()
-    keys.append(key_pair)
-    #print("Generated keys:", keys)
-    #keys.append(generate_rsa_keypair())
-    app.run(host='0.0.0.0', port=8080)
+    webServer = HTTPServer((hostname, serverPort), MyServer)
+    webServer.serve_forever()
+
+    webServer.server_close()
